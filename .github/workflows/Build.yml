@@ -54,26 +54,26 @@ jobs:
 
     - name: Setup Clang 12.0.7 and GCC toolchain
       run: |
-        # 1. Pobierz Clang 12.0.7 z oficjalnego źródła AOSP
+        mkdir -p toolchain
+
+        echo "=== Pobieranie Clang 12.0.7 ==="
         mkdir -p toolchain/clang-12.0.7
         cd toolchain/clang-12.0.7
-        # Link do archiwum z komitetu b669748 (zawiera clang r416183d, czyli 12.0.7)
-        wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/b669748458572622ed716407611633c5415da25c/clang-r416183d.tar.gz
+        wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-12.0.0_r1/clang-r416183d.tar.gz
         tar -xzf clang-r416183d.tar.gz
         rm clang-r416183d.tar.gz
         cd ../..
 
-        # 2. Pobierz GCC toolchain (aarch64) z publicznego mirrora
+        echo "=== Pobieranie GCC 4.9 ==="
         git clone --depth=1 https://github.com/RyuujiX/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 toolchain/google
 
-        # 3. Sprawdź, czy pliki istnieją
+        echo "=== Sprawdzanie toolchainów ==="
         ls -l toolchain/clang-12.0.7/bin/clang
-        ls -l toolchain/google/bin/aarch64-linux-android-
+        ls -l toolchain/google/aarch64-linux-android-4.9/bin/
 
     - name: Build kernel
       run: |
         chmod +x build_kernel.sh
-        # Skrypt sam ustawi wszystkie potrzebne zmienne i wyczyści out/
         ./build_kernel.sh
 
     - name: Prepare artifacts
@@ -81,6 +81,9 @@ jobs:
         mkdir -p release
         if [ -f arch/arm64/boot/Image ]; then
           cp arch/arm64/boot/Image release/
+        fi
+        if [ -f arch/arm64/boot/Image.gz ]; then
+          cp arch/arm64/boot/Image.gz release/
         fi
         if [ -d export ]; then
           cp -r export/* release/ 2>/dev/null || true
@@ -152,15 +155,19 @@ jobs:
         patch_dtbo;
         write_boot;
         EOF
+
         if [ -f ../kernel_files/Image ]; then
           cp ../kernel_files/Image .
         elif [ -f ../kernel_files/Image.gz ]; then
           cp ../kernel_files/Image.gz .
         fi
+
         if [ -f ../kernel_files/dtbo.img ]; then
           cp ../kernel_files/dtbo.img .
         fi
+
         zip -r9 ../samsung-a52s-anykernel.zip * -x .git README.md *placeholder
+
     - name: Upload AnyKernel3 zip
       uses: actions/upload-artifact@v4
       with:
