@@ -1,106 +1,235 @@
-name: Build SlopKernel (a52sxq)
+name: Build Samsung A52s Kernel
 
 on:
-  workflow_dispatch: # Odpalasz ręcznie jednym kliknięciem z poziomu telefonu
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag name'
+        required: false
+        default: ''
+
+env:
+  KERNEL_DEFCONFIG: a52sxq_eur_open_defconfig
+  ARCH: arm64
+  SUBARCH: arm64
+  ANDROID_MAJOR_VERSION: r
+  PLATFORM_VERSION: 11
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    
     steps:
-    - name: Maksymalizacja przestrzeni dyskowej
-      uses: easimon/maximize-build-space@master
-      with:
-        root-reserve-mb: 8192
-        temp-reserve-mb: 4096
-        remove-dotnet: 'true'
-        remove-android: 'true'
-        remove-haskell: 'true'
-
-    - name: Klonowanie kodu źródłowego
+    - name: Checkout kernel source
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
 
-    - name: Instalacja zależności systemowych
+    - name: Setup build environment
       run: |
         sudo apt-get update
-        sudo apt-get install -y bc build-essential libelf-dev ccache flex bison libssl-dev git zip unzip curl libncurses5
+        sudo apt-get install -y \
+          build-essential \
+          bc \
+          bison \
+          flex \
+          libssl-dev \
+          libelf-dev \
+          git \
+          wget \
+          zip \
+          python3 \
+          python3-pip \
+          ccache
 
-    - name: Przygotowanie struktur i Toolchainów pod skrypt build_kernel.sh
-      run: |
-        echo "Pobieranie i ustawianie kompatybilnych toolchainów..."
-        
-        # Tworzenie struktury folderów zgodnej z Twoim skryptem
-        mkdir -p toolchain/google
-        mkdir -p toolchain/clang-12.0.7
-        
-        # Pobieranie prebuilts GCC (AARCH64) dla BUILD_CROSS_COMPILE
-        git clone https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 -b ndk-r23-release --depth=1 toolchain/google/
-        
-        # Pobieranie kompatybilnego Clanga od Google pod zdefiniowaną ścieżkę
-        cd toolchain/clang-12.0.7
-        wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-12.1.0_r27/clang-r416183b.tar.gz
-        tar -xf clang-r416183b.tar.gz
-        cd ../..
-        
-        # Klonowanie AnyKernel3 jeśli nie ma go w Twoim repo, żeby skrypt zrobił zipa
-        if [ ! -d "AnyKernel3" ]; then
-          git clone https://github.com/osm0sis/AnyKernel3.git --depth=1 AnyKernel3
-        fi
-
-    - name: Integracja KernelSU Next (Legacy Branch)
-      run: |
-        echo "Wstrzykiwanie kodu KernelSU Next przy użyciu skryptu legacy..."
-        # Użycie poprawnego linku dostosowanego do starszych wersji kernela
-        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/refs/heads/legacy/kernel/setup.sh" | bash -s legacy
-
-    - name: Automatyczny Patch Configu (SlopKernel & KSU Next)
-      run: |
-        CONFIG_PATH="arch/arm64/configs/vendor/a52sxq_eur_open_defconfig"
-        echo "Modyfikowanie konfiguracji pod SlopKernel..."
-        
-        # Wyłączenie ciężkiego debuggowania pod daily use
-        sed -i 's/CONFIG_SLUB_DEBUG=y/CONFIG_SLUB_DEBUG=n/' $CONFIG_PATH
-        echo "CONFIG_SLUB_DEBUG_ON=n" >> $CONFIG_PATH
-        echo "CONFIG_PANIC_ON_DATA_CORRUPTION=n" >> $CONFIG_PATH
-        echo "CONFIG_EDAC_DEBUG=n" >> $CONFIG_PATH
-        
-        # Optymalizacje pod potężny ZRAM (aż do 24GB) i szybką kompresję
-        echo "CONFIG_ZSMALLOC=y" >> $CONFIG_PATH
-        echo "CONFIG_PGTABLE_MAPPED_TO_PMD=y" >> $CONFIG_PATH
-        echo "CONFIG_CRYPTO_LZ4=y" >> $CONFIG_PATH
-        echo "CONFIG_CRYPTO_ZSTD=y" >> $CONFIG_PATH
-
-        # Włączenie flag wymaganych przez KernelSU Next
-        echo "CONFIG_KSU=y" >> $CONFIG_PATH
-        echo "CONFIG_OVERLAY_FS=y" >> $CONFIG_PATH
-
-        echo "Modyfikacja pliku build_kernel.sh pod nazwę SlopKernel..."
-        sed -i 's/PROJECT_VERSION="0.1-exp"/PROJECT_VERSION="Slop-v1"/' build_kernel.sh
-        sed -i 's/ZIP_NAME="WonderfulKernel-/ZIP_NAME="SlopKernel-/' build_kernel.sh
-        sed -i 's/echo "===== Building Wonderful Kernel ====="/echo "===== Building SlopKernel ====="/' build_kernel.sh
-
-    - name: Odpalenie kompilacji przez Twój skrypt build_kernel.sh
-      run: |
-        chmod +x build_kernel.sh
-        
-        # Definiujemy zmienne katalogów wyjściowych dla Twojego skryptu
-        export EXPORT_DIR="$(pwd)/out_final"
-        export ANYKERNEL_DIR="$(pwd)/AnyKernel3"
-        
-        # Uruchomienie Twojego oryginalnego procesu kompilacji
-        ./build_kernel.sh
-
-    - name: Wrzucenie gotowej paczki .zip do wydań (Releases)
-      uses: softprops/action-gh-release@v2
+    - name: Setup ccache
+      uses: hendrikmuhs/ccache-action@v1.2
       with:
-        tag_name: "SlopKernel-${{ github.run_number }}"
-        name: "SlopKernel z KSU Next dla A52s 5G (Build #${{ github.run_number }})"
+        key: ${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-ccache-
+
+    - name: Download and setup toolchain
+      run: |
+        # Download Android NDK for cross-compilation
+        wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+        unzip -q android-ndk-r25c-linux.zip
+        
+        # Alternative: Download prebuilt GCC toolchain
+        git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 toolchain
+        
+        # Setup environment
+        echo "CROSS_COMPILE=$(pwd)/toolchain/bin/aarch64-linux-android-" >> $GITHUB_ENV
+        echo "CC=ccache $(pwd)/toolchain/bin/aarch64-linux-android-gcc" >> $GITHUB_ENV
+        echo "PATH=$(pwd)/toolchain/bin:$PATH" >> $GITHUB_ENV
+
+    - name: Setup kernel build environment
+      run: |
+        export ARCH=arm64
+        export SUBARCH=arm64
+        export CROSS_COMPILE=${{ env.CROSS_COMPILE }}
+        
+        # Make build script executable
+        chmod +x build_kernel.sh
+
+    - name: Clean previous builds
+      run: |
+        make clean
+        make mrproper
+
+    - name: Configure kernel
+      run: |
+        export ARCH=arm64
+        export CROSS_COMPILE=${{ env.CROSS_COMPILE }}
+        make ${{ env.KERNEL_DEFCONFIG }}
+
+    - name: Build kernel
+      run: |
+        export ARCH=arm64
+        export CROSS_COMPILE=${{ env.CROSS_COMPILE }}
+        export LOCALVERSION="-github-$(date +%Y%m%d)"
+        
+        # Build using the original script
+        ./build_kernel.sh
+        
+        # Alternative direct build
+        # make -j$(nproc) Image.gz dtbo.img
+
+    - name: Check build artifacts
+      run: |
+        ls -la arch/arm64/boot/
+        ls -la out/ || echo "No out directory"
+        
+        # Find built kernel image
+        find . -name "Image.gz" -type f
+        find . -name "*.img" -type f
+        find . -name "*.dtb" -type f
+
+    - name: Prepare release artifacts
+      run: |
+        mkdir -p release
+        
+        # Copy kernel image
+        if [ -f arch/arm64/boot/Image.gz ]; then
+          cp arch/arm64/boot/Image.gz release/
+        fi
+        
+        # Copy device tree blobs
+        if [ -f arch/arm64/boot/dtbo.img ]; then
+          cp arch/arm64/boot/dtbo.img release/
+        fi
+        
+        # Copy any other artifacts from build script
+        if [ -d out ]; then
+          cp -r out/* release/ 2>/dev/null || true
+        fi
+        
+        # Create build info
+        echo "Build Date: $(date)" > release/build_info.txt
+        echo "Commit: ${{ github.sha }}" >> release/build_info.txt
+        echo "Branch: ${{ github.ref_name }}" >> release/build_info.txt
+        
+        # Create flashable zip structure (optional)
+        mkdir -p release/anykernel3
+        
+        ls -la release/
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: samsung-a52s-kernel-${{ github.sha }}
+        path: release/
+        retention-days: 30
+
+    - name: Create Release
+      if: github.event.inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
+        name: Samsung A52s Kernel ${{ github.event.inputs.release_tag || github.ref_name }}
         body: |
-          Zoptymalizowany SlopKernel zbudowany automatycznie na bazie Twojego skryptu!
-          - Wbudowane **KernelSU Next** (gałąź Legacy)
-          - Usunięty overhead debuggowania (SLUB_DEBUG)
-          - Dodane flagi pod wydajny ZRAM (LZ4/ZSTD)
-          - Kompilacja wykonana w profilu Performance z flagami -O3
+          ## Samsung Galaxy A52s 5G Custom Kernel
+          
+          **Build Information:**
+          - Commit: ${{ github.sha }}
+          - Date: ${{ github.run_id }}
+          - Config: ${{ env.KERNEL_DEFCONFIG }}
+          
+          **Installation:**
+          1. Download the kernel files
+          2. Flash using ODIN or custom recovery
+          3. Reboot device
+          
+          **Warning:** Flashing custom kernels may void warranty and can brick your device.
         files: |
-          out_final/*
+          release/*
+        draft: false
+        prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-with-anykernel:
+    runs-on: ubuntu-22.04
+    needs: build
+    if: success()
+    
+    steps:
+    - name: Checkout AnyKernel3
+      uses: actions/checkout@v4
+      with:
+        repository: osm0sis/AnyKernel3
+        path: anykernel3
+
+    - name: Download kernel artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: samsung-a52s-kernel-${{ github.sha }}
+        path: kernel_files
+
+    - name: Setup AnyKernel3 for A52s
+      run: |
+        cd anykernel3
+        
+        # Configure for Samsung A52s
+        cat > anykernel.sh << 'EOF'
+        properties() {
+        kernel.string=Samsung A52s Custom Kernel
+        do.devicecheck=1
+        do.modules=0
+        do.systemless=1
+        do.cleanup=1
+        do.cleanuponabort=0
+        device.name1=a52sxq
+        device.name2=SM-A528B
+        device.name3=SM-A528N
+        supported.versions=11-13
+        supported.patchlevels=
+        }
+        
+        block=/dev/block/bootdevice/by-name/boot;
+        is_slot_device=0;
+        ramdisk_compression=auto;
+        
+        . tools/ak3-core.sh;
+        
+        chmod 644 $ramdisk/*;
+        patch_dtbo;
+        write_boot;
+        EOF
+        
+        # Copy kernel files
+        cp ../kernel_files/Image.gz ./ 2>/dev/null || echo "No Image.gz found"
+        cp ../kernel_files/dtbo.img ./ 2>/dev/null || echo "No dtbo.img found"
+        
+        # Create flashable zip
+        zip -r9 ../samsung-a52s-kernel-anykernel.zip * -x .git README.md *placeholder
+
+    - name: Upload AnyKernel3 zip
+      uses: actions/upload-artifact@v4
+      with:
+        name: samsung-a52s-anykernel-${{ github.sha }}
+        path: samsung-a52s-kernel-anykernel.zip
