@@ -22,14 +22,14 @@ env:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    
+
     steps:
     - name: Checkout kernel source
       uses: actions/checkout@v4
       with:
         fetch-depth: 1
 
-    - name: Setup build environment
+    - name: Install build dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -43,7 +43,6 @@ jobs:
           wget \
           zip \
           python3 \
-          python3-pip \
           ccache
 
     - name: Setup ccache
@@ -53,130 +52,76 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-ccache-
 
-    - name: Download and setup toolchain
+    - name: Setup Clang 12.0.7 and GCC toolchain
       run: |
-        # Download Android NDK for cross-compilation
-        wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
-        unzip -q android-ndk-r25c-linux.zip
-        
-        # Alternative: Download prebuilt GCC toolchain
-        git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 toolchain
-        
-        # Setup environment
-        echo "CROSS_COMPILE=$(pwd)/toolchain/bin/aarch64-linux-android-" >> $GITHUB_ENV
-        echo "CC=ccache $(pwd)/toolchain/bin/aarch64-linux-android-gcc" >> $GITHUB_ENV
-        echo "PATH=$(pwd)/toolchain/bin:$PATH" >> $GITHUB_ENV
+        # Utwórz strukturę katalogów wymaganą przez build_kernel.sh
+        mkdir -p toolchain/clang-12.0.7
+        mkdir -p toolchain/google
 
-    - name: Setup kernel build environment
-      run: |
-        export ARCH=arm64
-        export SUBARCH=arm64
-        export CROSS_COMPILE=${{ env.CROSS_COMPILE }}
-        
-        # Make build script executable
-        chmod +x build_kernel.sh
+        # Pobierz prekompilowany Clang 12.0.7 z AOSP
+        cd toolchain/clang-12.0.7
+        wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-12.0.7.tar.gz
+        tar -xzf clang-12.0.7.tar.gz
+        rm clang-12.0.7.tar.gz
+        cd ../..
 
-    - name: Clean previous builds
-      run: |
-        make clean
-        make mrproper
+        # Pobierz toolchain GCC (aarch64) od LineageOS (zgodny z oczekiwaniami skryptu)
+        git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 toolchain/google
 
-    - name: Configure kernel
-      run: |
-        export ARCH=arm64
-        export CROSS_COMPILE=${{ env.CROSS_COMPILE }}
-        make ${{ env.KERNEL_DEFCONFIG }}
+        # Sprawdź, czy pliki istnieją
+        ls -l toolchain/clang-12.0.7/bin/clang
+        ls -l toolchain/google/bin/aarch64-linux-android-
 
     - name: Build kernel
       run: |
-        export ARCH=arm64
-        export CROSS_COMPILE=${{ env.CROSS_COMPILE }}
-        export LOCALVERSION="-github-$(date +%Y%m%d)"
-        
-        # Build using the original script
+        chmod +x build_kernel.sh
+        # Skrypt sam ustawi wszystkie potrzebne zmienne i wyczyści out/
         ./build_kernel.sh
-        
-        # Alternative direct build
-        # make -j$(nproc) Image.gz dtbo.img
 
-    - name: Check build artifacts
-      run: |
-        ls -la arch/arm64/boot/
-        ls -la out/ || echo "No out directory"
-        
-        # Find built kernel image
-        find . -name "Image.gz" -type f
-        find . -name "*.img" -type f
-        find . -name "*.dtb" -type f
-
-    - name: Prepare release artifacts
+    - name: Prepare artifacts
       run: |
         mkdir -p release
-        
-        # Copy kernel image
-        if [ -f arch/arm64/boot/Image.gz ]; then
-          cp arch/arm64/boot/Image.gz release/
+        # Skrypt kopiuje obraz do arch/arm64/boot/Image, a także do export/
+        if [ -f arch/arm64/boot/Image ]; then
+          cp arch/arm64/boot/Image release/
         fi
-        
-        # Copy device tree blobs
-        if [ -f arch/arm64/boot/dtbo.img ]; then
-          cp arch/arm64/boot/dtbo.img release/
+        if [ -d export ]; then
+          cp -r export/* release/ 2>/dev/null || true
         fi
-        
-        # Copy any other artifacts from build script
-        if [ -d out ]; then
-          cp -r out/* release/ 2>/dev/null || true
-        fi
-        
-        # Create build info
-        echo "Build Date: $(date)" > release/build_info.txt
+        # Dodaj informacje o buildzie
+        echo "Build date: $(date)" > release/build_info.txt
         echo "Commit: ${{ github.sha }}" >> release/build_info.txt
         echo "Branch: ${{ github.ref_name }}" >> release/build_info.txt
-        
-        # Create flashable zip structure (optional)
-        mkdir -p release/anykernel3
-        
         ls -la release/
 
-    - name: Upload build artifacts
+    - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: samsung-a52s-kernel-${{ github.sha }}
         path: release/
         retention-days: 30
 
-    - name: Create Release
+    - name: Create Release (if tag or manual)
       if: github.event.inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
         name: Samsung A52s Kernel ${{ github.event.inputs.release_tag || github.ref_name }}
         body: |
-          ## Samsung Galaxy A52s 5G Custom Kernel
-          
-          **Build Information:**
+          **Samsung Galaxy A52s 5G Custom Kernel**
+
+          Build info:
           - Commit: ${{ github.sha }}
-          - Date: ${{ github.run_id }}
-          - Config: ${{ env.KERNEL_DEFCONFIG }}
-          
-          **Installation:**
-          1. Download the kernel files
-          2. Flash using ODIN or custom recovery
-          3. Reboot device
-          
-          **Warning:** Flashing custom kernels may void warranty and can brick your device.
-        files: |
-          release/*
-        draft: false
-        prerelease: false
+          - Defconfig: ${{ env.KERNEL_DEFCONFIG }}
+        files: release/*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Opcjonalne pakowanie AnyKernel3 – uruchamiane tylko jeśli poprzedni job się udał
   build-with-anykernel:
     runs-on: ubuntu-22.04
     needs: build
     if: success()
-    
     steps:
     - name: Checkout AnyKernel3
       uses: actions/checkout@v4
@@ -184,17 +129,17 @@ jobs:
         repository: osm0sis/AnyKernel3
         path: anykernel3
 
-    - name: Download kernel artifacts
+    - name: Download kernel artifact
       uses: actions/download-artifact@v4
       with:
         name: samsung-a52s-kernel-${{ github.sha }}
         path: kernel_files
 
-    - name: Setup AnyKernel3 for A52s
+    - name: Prepare AnyKernel3 zip
       run: |
         cd anykernel3
-        
-        # Configure for Samsung A52s
+
+        # Skonfiguruj anykernel.sh dla A52s
         cat > anykernel.sh << 'EOF'
         properties() {
         kernel.string=Samsung A52s Custom Kernel
@@ -207,29 +152,36 @@ jobs:
         device.name2=SM-A528B
         device.name3=SM-A528N
         supported.versions=11-13
-        supported.patchlevels=
         }
-        
+
         block=/dev/block/bootdevice/by-name/boot;
         is_slot_device=0;
         ramdisk_compression=auto;
-        
+
         . tools/ak3-core.sh;
-        
+
         chmod 644 $ramdisk/*;
         patch_dtbo;
         write_boot;
         EOF
-        
-        # Copy kernel files
-        cp ../kernel_files/Image.gz ./ 2>/dev/null || echo "No Image.gz found"
-        cp ../kernel_files/dtbo.img ./ 2>/dev/null || echo "No dtbo.img found"
-        
-        # Create flashable zip
-        zip -r9 ../samsung-a52s-kernel-anykernel.zip * -x .git README.md *placeholder
+
+        # Skopiuj obraz jądra (nazwa pliku: Image lub Image.gz)
+        if [ -f ../kernel_files/Image ]; then
+          cp ../kernel_files/Image .
+        elif [ -f ../kernel_files/Image.gz ]; then
+          cp ../kernel_files/Image.gz .
+        fi
+
+        # Opcjonalnie: skopiuj dtbo.img jeśli istnieje
+        if [ -f ../kernel_files/dtbo.img ]; then
+          cp ../kernel_files/dtbo.img .
+        fi
+
+        # Stwórz zip
+        zip -r9 ../samsung-a52s-anykernel.zip * -x .git README.md *placeholder
 
     - name: Upload AnyKernel3 zip
       uses: actions/upload-artifact@v4
       with:
         name: samsung-a52s-anykernel-${{ github.sha }}
-        path: samsung-a52s-kernel-anykernel.zip
+        path: samsung-a52s-anykernel.zip
