@@ -52,16 +52,16 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-ccache-
 
-    - name: Setup Clang 12.0.7 and GCC toolchain
+    - name: Setup Proton-Clang 12.0.7 and GCC toolchain
       run: |
         mkdir -p toolchain
 
-        echo "=== Pobieranie Clang 12.0.7 ==="
+        echo "=== Pobieranie Proton-Clang 12.0.7 ==="
         mkdir -p toolchain/clang-12.0.7
         cd toolchain/clang-12.0.7
-        wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-12.0.0_r1/clang-r416183d.tar.gz
-        tar -xzf clang-r416183d.tar.gz
-        rm clang-r416183d.tar.gz
+        wget -q --show-progress https://github.com/kdrag0n/proton-clang/releases/download/2021-09-16/clang-12.0.7.tar.gz
+        tar -xzf clang-12.0.7.tar.gz
+        rm clang-12.0.7.tar.gz
         cd ../..
 
         echo "=== Pobieranie GCC 4.9 ==="
