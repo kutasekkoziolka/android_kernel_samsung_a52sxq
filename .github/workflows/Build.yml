@@ -2,9 +2,9 @@ name: Build Samsung A52s Kernel
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, test ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main, test ]
   workflow_dispatch:
     inputs:
       release_tag:
@@ -13,7 +13,7 @@ on:
         default: ''
 
 env:
-  KERNEL_DEFCONFIG: a52sxq_eur_open_defconfig
+  KERNEL_DEFCONFIG: vendor/a52sxq_eur_open_defconfig
   ARCH: arm64
   SUBARCH: arm64
   ANDROID_MAJOR_VERSION: r
