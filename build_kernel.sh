@@ -24,9 +24,15 @@ ZIP_NAME="WonderfulKernel-${DEVICE}-${PROJECT_VERSION}-${DATE}.zip"
 
 # ---- Environment ----
 export LC_ALL=C
-export BUILD_CROSS_COMPILE=$(pwd)/toolchain/google/bin/aarch64-linux-android-
+
+# GCC 4.9 (poprawiona ścieżka)
+export BUILD_CROSS_COMPILE=$(pwd)/toolchain/google/aarch64-linux-android-4.9/bin/aarch64-linux-android-
+
+# Clang 12.0.7 (poprawiona ścieżka)
 export KERNEL_LLVM_BIN=$(pwd)/toolchain/clang-12.0.7/bin/clang
+
 export CLANG_TRIPLE=aarch64-linux-gnu-
+
 export KERNEL_MAKE_ENV="DTC_EXT=$(pwd)/tools/dtc CONFIG_BUILD_ARM64_DT_OVERLAY=y WERROR=0 CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=y CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y"
 export OUT_DIR=$(pwd)/out
 export CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=y
@@ -69,8 +75,9 @@ if [ "$1" == "menuconfig" ]; then
 fi
 
 # ---- Właściwa kompilacja ----
-make -j64 -C $(pwd) O=$OUT_DIR $KERNEL_MAKE_ENV ARCH=arm64 CROSS_COMPILE=$BUILD_CROSS_COMPILE REAL_CC=$KERNEL_LLVM_BIN CLANG_TRIPLE=$CLANG_TRIPLE LOCALVERSION="$LOCALVERSION" CONFIG_SECTION_MISMATCH_WARN_ONLY=y vendor/a52sxq_eur_open_defconfig 2>&1 | tee build.log
-make -j64 -C $(pwd) O=$OUT_DIR $KERNEL_MAKE_ENV ARCH=arm64 CROSS_COMPILE=$BUILD_CROSS_COMPILE REAL_CC=$KERNEL_LLVM_BIN CLANG_TRIPLE=$CLANG_TRIPLE LOCALVERSION="$LOCALVERSION" CONFIG_SECTION_MISMATCH_WARN_ONLY=y 2>&1 | tee -a build.log
+make -j$(nproc) -C $(pwd) O=$OUT_DIR $KERNEL_MAKE_ENV ARCH=arm64 CROSS_COMPILE=$BUILD_CROSS_COMPILE REAL_CC=$KERNEL_LLVM_BIN CLANG_TRIPLE=$CLANG_TRIPLE LOCALVERSION="$LOCALVERSION" CONFIG_SECTION_MISMATCH_WARN_ONLY=y vendor/a52sxq_eur_open_defconfig 2>&1 | tee build.log
+
+make -j$(nproc) -C $(pwd) O=$OUT_DIR $KERNEL_MAKE_ENV ARCH=arm64 CROSS_COMPILE=$BUILD_CROSS_COMPILE REAL_CC=$KERNEL_LLVM_BIN CLANG_TRIPLE=$CLANG_TRIPLE LOCALVERSION="$LOCALVERSION" CONFIG_SECTION_MISMATCH_WARN_ONLY=y 2>&1 | tee -a build.log
 
 # ---- Skopiowanie obrazu do standardowej lokalizacji ----
 cp out/arch/arm64/boot/Image arch/arm64/boot/Image 2>/dev/null
